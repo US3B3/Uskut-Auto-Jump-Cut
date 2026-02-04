@@ -10,6 +10,12 @@ export interface ProcessingSettings {
   padding: number; // seconds
 }
 
+export interface VideoResolution {
+  width: number;
+  height: number;
+  label?: string;
+}
+
 export enum ProcessingStatus {
   IDLE,
   EXTRACTING_AUDIO,
@@ -23,4 +29,5 @@ export interface AnalysisResult {
   originalDuration: number;
   newDuration: number;
   cutCount: number;
+  resolution: VideoResolution;
 }

@@ -1,25 +1,50 @@
 import React, { useState } from 'react';
-import { Sliders, Scissors, Download, AlertCircle, PlayCircle } from 'lucide-react';
+import { Sliders, Scissors, Download, AlertCircle, PlayCircle, Loader2, Monitor } from 'lucide-react';
 import DropZone from './components/DropZone';
 import { extractAudioAndDetectSilence } from './services/audioService';
 import { generateFcpXml } from './services/xmlService';
-import { ProcessingStatus, AnalysisResult } from './types';
+import { getVideoResolution } from './services/mediaHelpers';
+import { ProcessingStatus, AnalysisResult, VideoResolution } from './types';
+
+// Standart Çözünürlük Seçenekleri
+const RESOLUTION_OPTIONS = [
+  { label: 'Otomatik (Dosyadan)', value: 'auto' },
+  { label: '720p HD (1280x720)', value: '720p', width: 1280, height: 720 },
+  { label: '1080p Full HD (1920x1080)', value: '1080p', width: 1920, height: 1080 },
+  { label: '2K QHD (2560x1440)', value: '1440p', width: 2560, height: 1440 },
+  { label: '4K UHD (3840x2160)', value: '4k', width: 3840, height: 2160 },
+];
 
 const App: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>(ProcessingStatus.IDLE);
   const [progressMsg, setProgressMsg] = useState<string>('');
+  const [progressPercent, setProgressPercent] = useState<number>(0);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   
   // Ayarlar
   const [thresholdDb, setThresholdDb] = useState<number>(-30);
   const [minSilenceDuration, setMinSilenceDuration] = useState<number>(0.5);
   const [padding, setPadding] = useState<number>(0.1);
+  
+  // Çözünürlük State'i
+  const [selectedResMode, setSelectedResMode] = useState<string>('auto');
+  const [detectedRes, setDetectedRes] = useState<VideoResolution>({ width: 1920, height: 1080 });
 
-  const handleFileSelect = (selectedFile: File) => {
+  const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
     setStatus(ProcessingStatus.IDLE);
     setResult(null);
+    setProgressPercent(0);
+    setProgressMsg('');
+
+    // Dosya seçildiğinde çözünürlüğü algıla
+    try {
+      const res = await getVideoResolution(selectedFile);
+      setDetectedRes(res);
+    } catch (e) {
+      console.warn("Çözünürlük algılanamadı, varsayılan kullanılıyor.");
+    }
   };
 
   const handleProcess = async () => {
@@ -27,23 +52,36 @@ const App: React.FC = () => {
 
     try {
       setStatus(ProcessingStatus.EXTRACTING_AUDIO);
+      setProgressPercent(0);
       
       const segments = await extractAudioAndDetectSilence(
         file,
         { thresholdDb, minSilenceDuration, padding },
-        (msg) => setProgressMsg(msg)
+        (msg) => setProgressMsg(msg),
+        (percent) => setProgressPercent(percent)
       );
 
       const newDuration = segments.reduce((acc, seg) => acc + seg.duration, 0);
+
+      // Aktif çözünürlüğü belirle
+      let finalRes = detectedRes;
+      if (selectedResMode !== 'auto') {
+        const option = RESOLUTION_OPTIONS.find(o => o.value === selectedResMode);
+        if (option && option.width && option.height) {
+          finalRes = { width: option.width, height: option.height };
+        }
+      }
 
       setResult({
         segments,
         originalDuration: 0,
         newDuration,
-        cutCount: segments.length
+        cutCount: segments.length,
+        resolution: finalRes
       });
       
       setStatus(ProcessingStatus.COMPLETED);
+      setProgressPercent(100);
     } catch (error) {
       console.error(error);
       setStatus(ProcessingStatus.ERROR);
@@ -54,7 +92,7 @@ const App: React.FC = () => {
   const handleDownloadXml = () => {
     if (!result || !file) return;
     
-    const xmlContent = generateFcpXml(file.name, result.segments);
+    const xmlContent = generateFcpXml(file.name, result.segments, result.resolution);
     const blob = new Blob([xmlContent], { type: 'text/xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -144,7 +182,30 @@ const App: React.FC = () => {
                  onChange={(e) => setPadding(Number(e.target.value))}
                  className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
                />
-               <p className="text-xs text-slate-500">Kesilen kliplerin başına ve sonuna güvenlik payı ekler.</p>
+             </div>
+
+             {/* Çözünürlük Seçici */}
+             <div className="space-y-2 pt-4 border-t border-slate-700">
+               <div className="flex items-center gap-2 text-sm text-slate-300 mb-1">
+                 <Monitor size={16} className="text-cyan-400"/>
+                 <label>Çıktı Çözünürlüğü</label>
+               </div>
+               <select 
+                 value={selectedResMode}
+                 onChange={(e) => setSelectedResMode(e.target.value)}
+                 className="w-full bg-slate-900 border border-slate-600 text-slate-200 text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block p-2.5"
+               >
+                 {RESOLUTION_OPTIONS.map(opt => (
+                   <option key={opt.value} value={opt.value}>
+                     {opt.value === 'auto' && file 
+                       ? `Otomatik (${detectedRes.width}x${detectedRes.height})` 
+                       : opt.label}
+                   </option>
+                 ))}
+               </select>
+               <p className="text-xs text-slate-500">
+                 Otomatik mod, yüklenen videonun boyutlarını kullanır.
+               </p>
              </div>
           </div>
 
@@ -160,7 +221,9 @@ const App: React.FC = () => {
                   </div>
                   <div className="truncate">
                     <p className="font-medium text-white truncate">{file.name}</p>
-                    <p className="text-sm text-slate-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                    <p className="text-sm text-slate-400">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB • {detectedRes.width}x{detectedRes.height}
+                    </p>
                   </div>
                 </div>
                 {status === ProcessingStatus.IDLE && (
@@ -174,11 +237,25 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* Durum Mesajları */}
+            {/* Durum Mesajları ve İlerleme Çubuğu */}
             {status !== ProcessingStatus.IDLE && status !== ProcessingStatus.COMPLETED && (
-              <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 text-center animate-pulse">
-                <div className="text-cyan-400 mb-2">İşleniyor...</div>
-                <div className="text-slate-300 text-sm">{progressMsg}</div>
+              <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 text-center">
+                <div className="flex items-center justify-center gap-2 text-cyan-400 mb-4">
+                  <Loader2 className="animate-spin" />
+                  <span className="font-semibold text-lg">İşleniyor...</span>
+                </div>
+                
+                <div className="relative w-full bg-slate-700 h-4 rounded-full overflow-hidden mb-2">
+                  <div 
+                    className="absolute top-0 left-0 h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300 ease-out"
+                    style={{ width: `${Math.max(5, progressPercent)}%` }}
+                  />
+                </div>
+                
+                <div className="flex justify-between text-sm">
+                   <span className="text-slate-400">{progressMsg}</span>
+                   <span className="font-mono text-cyan-400 font-bold">%{Math.round(progressPercent)}</span>
+                </div>
               </div>
             )}
             
@@ -213,6 +290,10 @@ const App: React.FC = () => {
                       {(result.segments[result.segments.length-1].end - result.newDuration).toFixed(1)}s
                     </div>
                   </div>
+                </div>
+                
+                <div className="text-xs text-center text-slate-500">
+                    Çıktı Formatı: {result.resolution.width}x{result.resolution.height}
                 </div>
 
                 <div className="p-4 bg-yellow-900/10 border border-yellow-800/30 rounded-lg text-sm text-yellow-200/80">

@@ -1,11 +1,13 @@
-import { AudioSegment } from '../types';
+import { AudioSegment, VideoResolution } from '../types';
 
 export const generateFcpXml = (
   filename: string,
   segments: AudioSegment[],
+  resolution: VideoResolution,
   fps: number = 30
 ): string => {
   const timebase = fps;
+  const { width, height } = resolution;
   
   // Basic duration calculations
   let totalDuration = 0;
@@ -30,8 +32,8 @@ export const generateFcpXml = (
               <timebase>${timebase}</timebase>
               <ntsc>${timebase % 1 !== 0 ? 'TRUE' : 'FALSE'}</ntsc>
             </rate>
-            <width>1920</width>
-            <height>1080</height>
+            <width>${width}</width>
+            <height>${height}</height>
             <anamorphic>FALSE</anamorphic>
             <pixelaspectratio>square</pixelaspectratio>
             <fielddominance>none</fielddominance>
@@ -70,8 +72,8 @@ export const generateFcpXml = (
               <media>
                 <video>
                    <samplecharacteristics>
-                    <width>1920</width>
-                    <height>1080</height>
+                    <width>${width}</width>
+                    <height>${height}</height>
                    </samplecharacteristics>
                 </video>
                 <audio>
